@@ -61,6 +61,7 @@ void debug_recive(uint8_t* p_data, uint32_t len)
  */
 void test_task(void* pvParameters)
 {
+    printf("2222222\r\n");
     while (1) 
     {
         /* code */
@@ -73,7 +74,7 @@ void test_task(void* pvParameters)
             //spi_test();
             // spi_sector_test();
             //test_single_page_write();
-            // Hash_test();
+            //Hash_test();
             // test_block_operation(); 
             // uint32_t test_block_num = 0;  // 选择块1进行测试
             // if (test_block_full_operation(test_block_num) == 0) {
@@ -86,10 +87,53 @@ void test_task(void* pvParameters)
             // printf("Hash2: %d\n", hash_string("cell_iv1_alars"));  
             spi_flag = 0;
         }
-        gd32f4x_timer2_led_j49_6_set_duty(50);
         // gpio_bit_set(LED_J49_6_GPIO,LED_J49_6_PIN);
         //printf("test_task running...\r\n");
         vTaskDelay(pdMS_TO_TICKS(100));
+    }
+}
+
+/**
+ * @函数名称: ota_task()
+ * @功能描述: ota升级任务
+ * @输入: pvParameters
+ * @输出: 无
+ * @返回值: 无
+ */
+void ota_task(void *pvParameters) {
+    static uint8_t temp_buf[512];
+
+    printf("[OTA] Task started\r\n");
+    ota_reset_state();
+
+    while (1) {
+        uint32_t len = ring_buffer_read(temp_buf, sizeof(temp_buf));
+        if (len > 0) {
+            usart2_data_process(temp_buf, len);
+            ota_last_tick = xTaskGetTickCount();
+        }
+        
+        if (ota_done && ota_state == OTA_STATE_DONE) {
+            actual_crc = ota_calc_crc32(BACKUP_ADDR, expected_len);
+            printf("[OTA] CRC check: expected=%08X, actual=%08X\r\n", expected_crc, actual_crc);
+            if (expected_crc == actual_crc) {
+                set_ota_flag();
+                vTaskDelay(500);
+                NVIC_SystemReset();
+            } else {
+                printf("[OTA] CRC error. Resetting state.\r\n");
+                ota_reset_state();
+            }
+        }
+
+        if (time_flag && ota_state != OTA_STATE_IDLE && ota_state < OTA_STATE_DONE) {
+            if ((xTaskGetTickCount() - ota_last_tick) * portTICK_PERIOD_MS >= OTA_TIMEOUT_MS) {
+                printf("[OTA] Timeout. Resetting state.\r\n");
+                ota_reset_state();
+            }
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(10));  // Reduce CPU load
     }
 }
 
@@ -128,6 +172,29 @@ void counttest_task(void* pvParameters)
     }
 }
 
+/**
+ * @函数名称: Hash_test()
+ * @功能描述: 哈希表映射flash接口测试函数
+ * @输入: 无
+ * @输出: 无
+ * @返回值: 无
+ */
+uint8_t Hash_test(void)
+{
+    
+    if (parameter_rom_register(&rom_parameter)) {
+        printf("successful\r\n");
+    } else {
+        printf("Error");
+    }
+    if (0 != parameter_rom_init(&rom_parameter)) {
+        printf("Error\r\n");
+    } else {
+        printf("successful");
+    }
+    return 0;
+    
+}
 
 /**
  * @函数名称: spi_test()
@@ -281,29 +348,7 @@ void counttest_task(void* pvParameters)
 //      return 0;
 // }
 
-/**
- * @函数名称: Hash_test()
- * @功能描述: 哈希表映射flash接口测试函数
- * @输入: 无
- * @输出: 无
- * @返回值: 无
- */
-// uint8_t Hash_test(void)
-// {
-    
-//     if (parameter_rom_register(&rom_parameter)) {
-//         printf("successful\r\n");
-//     } else {
-//         printf("Error");
-//     }
-//     if (0 != parameter_rom_init(&rom_parameter)) {
-//         printf("Error\r\n");
-//     } else {
-//         printf("successful");
-//     }
-//     return 0;
-    
-// }
+
 
 /**
  * @函数名称: est_block_operation()

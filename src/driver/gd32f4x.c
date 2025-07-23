@@ -90,7 +90,7 @@ uint8_t  Usart0RxBuff[USART0_RXBUFF_COUNT_MAX] = {0};			/*串口0的数据接收
 volatile static uint16_t Usart0RxNum = 0;						/*串口0接收到的数据个数*/
 
 volatile uint8_t  Usart2TxBuff[USART2_TXBUFF_COUNT_MAX] = {0};	/*串口2的数据发送缓冲区*/
-uint8_t  Usart2RxBuff[USART2_RXBUFF_COUNT_MAX] = {0};			/*串口2的数据接收缓冲区*/
+__attribute__((aligned(4))) uint8_t  Usart2RxBuff[USART2_RXBUFF_COUNT_MAX] = {0};			/*串口2的数据接收缓冲区*/
 
 volatile static uint16_t Usart2RxNum = 0;						/*串口2接收到的数据个数*/
 
@@ -516,24 +516,57 @@ void EXTI5_9_IRQHandler(void)
  * @输出: 无
  * @返回值: 无
  */
-void gd32f4x_usart0_init(uint32_t baudrate) 
-{
-    rcu_periph_clock_enable(RCU_USART2);  /* 使能串口0的时钟*/
-    rcu_periph_clock_enable(RCU_GPIOC);
-    /* 接收引脚配置*/
-    gpio_mode_set(USART0_RX_GPIO, GPIO_MODE_AF, GPIO_PUPD_PULLUP, USART0_RX_PIN);  
-    /*	gpio_output_options_set(USART5_RX_GPIO,GPIO_OTYPE_PP,GPIO_OSPEED_50MHZ,USART5_RX_PIN);*/
-    /*设置GPIO输出模式和速度*/
-    gpio_af_set(USART0_RX_GPIO, GPIO_AF_7, USART0_RX_PIN);  
+// void gd32f4x_usart0_init(uint32_t baudrate) 
+// {
+//     rcu_periph_clock_enable(RCU_USART2);  /* 使能串口0的时钟*/
+//     rcu_periph_clock_enable(RCU_GPIOC);
+//     /* 接收引脚配置*/
+//     gpio_mode_set(USART0_RX_GPIO, GPIO_MODE_AF, GPIO_PUPD_PULLUP, USART0_RX_PIN);  
+//     /*	gpio_output_options_set(USART5_RX_GPIO,GPIO_OTYPE_PP,GPIO_OSPEED_50MHZ,USART5_RX_PIN);*/
+//     /*设置GPIO输出模式和速度*/
+//     gpio_af_set(USART0_RX_GPIO, GPIO_AF_7, USART0_RX_PIN);  
 
-    /* 发送引脚配置*/
-    gpio_mode_set(USART0_TX_GPIO, GPIO_MODE_AF, GPIO_PUPD_PULLUP, USART0_TX_PIN); 
-    gpio_output_options_set(USART0_TX_GPIO, GPIO_OTYPE_PP, GPIO_OSPEED_50MHZ, USART0_TX_PIN);  
-    gpio_af_set(USART0_TX_GPIO, GPIO_AF_7, USART0_TX_PIN);  
+//     /* 发送引脚配置*/
+//     gpio_mode_set(USART0_TX_GPIO, GPIO_MODE_AF, GPIO_PUPD_PULLUP, USART0_TX_PIN); 
+//     gpio_output_options_set(USART0_TX_GPIO, GPIO_OTYPE_PP, GPIO_OSPEED_50MHZ, USART0_TX_PIN);  
+//     gpio_af_set(USART0_TX_GPIO, GPIO_AF_7, USART0_TX_PIN);  
+
+//     usart_deinit(USART2);                             
+//     usart_oversample_config(USART2, USART_OVSMOD_8);  
+//     usart_baudrate_set(USART2, baudrate);            
+//     usart_word_length_set(USART2, USART_WL_8BIT); 
+//     usart_stop_bit_set(USART2, USART_STB_1BIT);   
+//     usart_parity_config(USART2, USART_PM_NONE);    
+
+//     usart_transmit_config(USART2, USART_TRANSMIT_ENABLE);  
+//     usart_receive_config(USART2, USART_RECEIVE_ENABLE);   
+//     usart_enable(USART2);                                 
+
+//     usart_dma_receive_config(USART2, USART_DENR_ENABLE); 
+//     usart_dma_transmit_config(USART2, USART_DENT_ENABLE); 
+
+//     usart_interrupt_enable(USART2, USART_INT_IDLE);  
+//     /*	usart_interrupt_enable(USART0, USART_INT_TBE);*/
+    
+
+//     nvic_irq_enable(USART2_IRQn, 3, 2);  
+// }
+
+void gd_eval_com_init(void)
+{
+	rcu_periph_clock_enable(RCU_USART2);  
+    rcu_periph_clock_enable(RCU_GPIOC);
+    gpio_mode_set(USART2_RX_GPIO, GPIO_MODE_AF, GPIO_PUPD_PULLUP, USART2_RX_PIN);  
+    /*	gpio_output_options_set(USART5_RX_GPIO,GPIO_OTYPE_PP,GPIO_OSPEED_50MHZ,USART5_RX_PIN);*/
+    gpio_af_set(USART2_RX_GPIO, GPIO_AF_7, USART2_RX_PIN);  
+
+    gpio_mode_set(USART2_TX_GPIO, GPIO_MODE_AF, GPIO_PUPD_PULLUP, USART2_TX_PIN); 
+    gpio_output_options_set(USART2_TX_GPIO, GPIO_OTYPE_PP, GPIO_OSPEED_50MHZ, USART2_TX_PIN);  
+    gpio_af_set(USART2_TX_GPIO, GPIO_AF_7, USART2_TX_PIN);  
 
     usart_deinit(USART2);                             
     usart_oversample_config(USART2, USART_OVSMOD_8);  
-    usart_baudrate_set(USART2, baudrate);            
+    usart_baudrate_set(USART2, 115200);            
     usart_word_length_set(USART2, USART_WL_8BIT); 
     usart_stop_bit_set(USART2, USART_STB_1BIT);   
     usart_parity_config(USART2, USART_PM_NONE);    
@@ -543,13 +576,13 @@ void gd32f4x_usart0_init(uint32_t baudrate)
     usart_enable(USART2);                                 
 
     usart_dma_receive_config(USART2, USART_DENR_ENABLE); 
-    usart_dma_transmit_config(USART2, USART_DENT_ENABLE); 
+    usart_dma_transmit_config(USART2, USART_DENR_ENABLE); 
 
     usart_interrupt_enable(USART2, USART_INT_IDLE);  
     /*	usart_interrupt_enable(USART0, USART_INT_TBE);*/
     
 
-    nvic_irq_enable(USART2_IRQn, 2, 3);  
+    nvic_irq_enable(USART2_IRQn, 0, 0);  
 }
 
 /* 串口调试************************************************************************** */
@@ -704,6 +737,7 @@ int _write(int file, char* data, int len)
     }
     return len;
 }
+
 
 /* ************************************************************************** */
 /**
@@ -968,42 +1002,98 @@ uint8_t gd32f4x_usart2_set_receive_callback(fun_usart_recive_callback receive_ca
 /*static u16 data[10] = {0};*/
 void USART2_IRQHandler(void)
 {
-	uint32_t data_len = 0;
-	uint32_t ulReturn;
-    // DRIVER_LOG(" RS485 RX IRQ \r\n");
-	ulReturn = taskENTER_CRITICAL_FROM_ISR();
-	if(usart_interrupt_flag_get(USART2, USART_INT_FLAG_IDLE) != RESET)
-	{
-		usart_interrupt_flag_clear(USART2,USART_INT_FLAG_IDLE);	
-		(void)usart_data_receive(USART2);
-		dma_channel_disable(DMA0, DMA_CH1);					
-		dma_flag_clear(DMA0, DMA_CH1, DMA_INTF_FTFIF);		
+    	uint32_t ulReturn;
+        ulReturn = taskENTER_CRITICAL_FROM_ISR();
+        if (usart_interrupt_flag_get(USART2, USART_INT_FLAG_IDLE) != RESET) {
+        usart_interrupt_flag_clear(USART2, USART_INT_FLAG_IDLE);
+        (void)usart_data_receive(USART2);
 
-        data_len = (USART2_RXBUFF_COUNT_MAX-dma_transfer_number_get(DMA0, DMA_CH1));
-        if (usart2_receive_callback) {
-            /*回调进入组包函数*/
-            usart2_receive_callback(Usart2RxBuff, data_len);
+        dma_channel_disable(DMA0, DMA_CH1);
+        data_len = USART2_RXBUFF_COUNT_MAX - dma_transfer_number_get(DMA0, DMA_CH1);
+
+        for (i = 0; i < data_len; i++) {
+            ring_buffer[ring_head] = Usart2RxBuff[i];
+            ring_head = (ring_head + 1) % RING_BUFFER_SIZE;
         }
-        dma_interrupt_flag_clear(DMA0,DMA_CH1,DMA_INT_FLAG_FTF);
-		dma_channel_enable(DMA0, DMA_CH1); 
-	}
-	
-	if(usart_interrupt_flag_get(USART2, USART_INT_IDLE) != RESET)
-	{	
-        DRIVER_LOG(" RS485 RX IRQ USART_INT_IDLE \r\n");
-		usart_interrupt_flag_clear(USART2,USART_INT_IDLE);	
-	} 	
+
+        dma_flag_clear(DMA0, DMA_CH1, DMA_INTF_FTFIF);
+        dma_transfer_number_config(DMA0, DMA_CH1, USART2_RXBUFF_COUNT_MAX);
+        dma_channel_enable(DMA0, DMA_CH1);
+    }
 	taskEXIT_CRITICAL_FROM_ISR(ulReturn);
 }
 /* 回调函数处理 */
 fun_usart_recive_callback usart2_data_process(uint8_t* data, uint32_t length) {
-    int num = 0;
-    for(uint8_t i = 0;i < length;i++) {
-        num += (data[i]-'0')*pow(10,length-1-i);     
-    }
-    gd32f4x_timer2_led_j49_6_set_duty(num);
-    printf("duty = %d\r\n", num); 
+    while (length > 0) {
+        switch (ota_state) {
+            case OTA_STATE_IDLE:
+            case OTA_STATE_HEADER:
+                while (length > 0 && header_received < 4) {
+                    header_buf[header_received++] = *data++;
+                    length--;
+                }
+                if (header_received == 4) {
+                    memcpy(&expected_len, header_buf, 4);
+                    printf("[OTA] Expected firmware length: %u\r\n", expected_len);
+										time_flag = 1;
+                    if (expected_len == 0 || expected_len > 0x3C000) {
+                        ota_state = OTA_STATE_ERROR;
+                        return;
+                    }
 
+                    flash_erase(BACKUP_ADDR, expected_len);
+                    ota_state = OTA_STATE_RECEIVING;
+                    total_received = 0;
+                    block_idx = 0;
+                    ota_data_ptr = ota_block;
+                    time_flag = 1;
+                    ota_last_tick = xTaskGetTickCount();
+                }
+                break;
+
+            case OTA_STATE_RECEIVING: {
+                uint32_t remain = expected_len - total_received;
+                uint32_t to_copy = (length < remain) ? length : remain;
+
+                while (to_copy-- > 0) {
+                    *ota_data_ptr++ = *data++;
+                    block_idx++;
+                    total_received++;
+                    length--;
+                    if (block_idx >= OTA_BLOCK_SIZE || total_received == expected_len) {
+                        flash_write(BACKUP_ADDR + total_received - block_idx, ota_block, block_idx);
+                        block_idx = 0;
+                        ota_data_ptr = ota_block;
+                    }
+                }
+                if (total_received == expected_len) {
+                    ota_state = OTA_STATE_CRC;
+                    crc_received = 0;
+                }
+                break;
+            }
+
+            case OTA_STATE_CRC:
+							printf("[OTA] Enter CRC state, crc_received=%d, length=%lu\r\n", crc_received, length);
+                while (length > 0 && crc_received < 4) {
+                    crc_buf[crc_received++] = *data++;
+                    length--;
+                }
+                if (crc_received == 4) {
+                    expected_crc = *(uint32_t*)crc_buf;
+                    flash_write(BACKUP_ADDR + expected_len, crc_buf, 4);
+                    ota_state = OTA_STATE_DONE;
+                    ota_done = true;
+                    printf("[OTA] OTA done. CRC = 0x%08X\r\n", expected_crc);
+                }
+                break;
+
+            case OTA_STATE_DONE:
+            case OTA_STATE_ERROR:
+                return;
+        }
+    }
+	printf("[OTA DEBUG] State: %d, total_received: %u, expected: %u\r\n", ota_state, total_received, expected_len);
 }
 
 
@@ -1563,11 +1653,11 @@ void gd32f4x_timer0_init(uint16_t Prescaler, uint32_t Period, uint32_t BUZZER_Du
 	gpio_af_set(LED_J49_7_GPIO, LED_J49_7_AF, LED_J49_7_PIN);
     gpio_bit_reset(LED_J49_7_GPIO,LED_J49_7_PIN);
 
-    /* 蜂鸣器 
+    //蜂鸣器 
 	 gpio_mode_set(BUZZER_PORT, GPIO_MODE_AF, GPIO_PUPD_NONE, BUZZER_PIN);
      gpio_output_options_set(BUZZER_PORT, GPIO_OTYPE_PP, GPIO_OSPEED_50MHZ, BUZZER_PIN);
      gpio_af_set(BUZZER_PORT, BUZZER_AF, BUZZER_PIN);
-     gpio_bit_reset(BUZZER_PORT,BUZZER_PIN);*/
+     gpio_bit_reset(BUZZER_PORT,BUZZER_PIN);
 
 
 	timer_parameter_struct timer_initpara;
@@ -1800,7 +1890,7 @@ void gd32f4x_timer_init(void)
 	gd32f4x_timer4_init();/*定时器4初始化,100ms定时中断一次*/
 	
 	/*下面的两个TIMER是用于硬件中输出的分别控制蜂鸣器以及风扇的 led7 beep*/
-	// gd32f4x_timer0_init(400,100,100,50);/*定时器0初始化*/
+	gd32f4x_timer0_init(400,100,100,50);/*定时器0初始化*/
 
 	gd32f4x_timer8_init(100,1000,50);/*定时器8初始化*/
 }
@@ -2214,13 +2304,13 @@ void CAN1_RX1_IRQHandler(void)
     can_message_receive(CAN1, CAN_FIFO1, &RxMessage);
 
     if (can1_receive_call_back != NULL) {
-        if (can1_receive_call_back != NULL) {
-            if(atcommand_can_flag == 1)
-            {
-                can1_send_msg(0x0C000000, RxMessage.rx_data, sizeof(RxMessage.rx_data)); 
-            }
-            /* can0_receive_call_back(&RxMessage); */
+ 
+        if(atcommand_can_flag == 1)
+        {
+            can1_send_msg(0x0C000000, RxMessage.rx_data, sizeof(RxMessage.rx_data)); 
         }
+        /* can0_receive_call_back(&RxMessage); */
+
         can1_receive_call_back(&RxMessage);
     }
     taskEXIT_CRITICAL_FROM_ISR(ulreturn); 

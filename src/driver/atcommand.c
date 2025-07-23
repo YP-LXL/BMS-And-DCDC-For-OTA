@@ -527,7 +527,7 @@ uint8_t at_ledoff_func(char params[])
   
   switch (num){	
 		case 1:/*LED1(red)*/
-				gd32f4x_timer2_led_j49_6_set_duty(0);
+			  gd32f4x_timer2_led_j49_6_set_duty(0);
 			  printf("AT+RES,ACK\r\n");
 			  printf("AT+RES,LED1(red) off\r\n");
 		  printf("AT+RES,end\r\n");			
@@ -916,29 +916,32 @@ uint8_t at_adc_func(char params[])
 
 uint8_t at_beepwm_func(char params[])
 {
-	char param[PARAM_MAX_NUM][PER_PARAM_MAX_LEN] = {'\0'};
-	uint8_t param_num = 0;
+    char param[PARAM_MAX_NUM][PER_PARAM_MAX_LEN] = {'\0'};
+    uint8_t param_num = 0;
   
-  ATcmd_split_params(params, param, &param_num);
+    ATcmd_split_params(params, param, &param_num);
   
-  if (param_num != 2U){  /*motor must has two paramters color and status*/
-	  printf("AT+RES,ACK\r\n");
-	  printf("AT+RES,Err,wrong param num, color,status. [1000:timer0的周期, 50:timer0的占空比]\r\n");
-	  printf("AT+RES,end\r\n");
-	  return 0U; 
-  }
+    if (param_num != 2U) {
+        printf("AT+RES,ACK\r\n");
+        printf("AT+RES,Err,wrong param num, need <freq>,<duty>\r\n");
+        printf("AT+RES,end\r\n");
+        return 0U; 
+    }
   
-  uint32_t num = String2Int(param[0]);
-
-  gd32f4x_timer0ch1_set_hz((uint32_t)num);
-
-  char *comma = strchr(param[0], ',');
-
-  if (comma != NULL) {
-    num = String2Int(comma + 1);
-    gd32f4x_timer0ch1_set_pwm_duty((uint8_t)num); 
-  }
-  return 1U;		
+    // 直接读取分割后的参数
+    uint32_t freq = String2Int(param[0]);    // 频率（Hz）
+    uint32_t duty = String2Int(param[1]);    // 占空比（0-100）
+  
+    // 设置频率和占空比
+    gd32f4x_timer0ch1_set_hz(freq);
+    gd32f4x_timer0ch1_set_pwm_duty((uint8_t)duty);
+    
+    // 打印执行结果
+    printf("AT+RES,ACK\r\n");
+    printf("AT+RES,BEEPWM set to %u Hz, duty %u%%\r\n", freq, duty);
+    printf("AT+RES,end\r\n");
+  
+    return 1U;		
 }
 
 uint8_t at_fanpwm_func(char params[])

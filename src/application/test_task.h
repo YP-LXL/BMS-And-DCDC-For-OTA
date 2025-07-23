@@ -13,6 +13,7 @@
 #include "parameter.h"
 // #include "period_task.h"
 void test_task(void *pvParameters);
+void ota_task(void *pvParameters);
 void counttest_task(void* pvParameters);
 uint8_t spi_sector_test(void);
 uint8_t spi_test(void);

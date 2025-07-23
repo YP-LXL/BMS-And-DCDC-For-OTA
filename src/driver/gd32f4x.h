@@ -14,6 +14,7 @@
 /* RTC************************************************************************** */
 
 #include "common.h"
+#include "ota.h"
 // #include "parameter.h"
 /* 系统时钟************************************************************************** */
 void gd32f4x_delay_us(uint32_t nus);
@@ -233,10 +234,15 @@ extern uint32_t exitirq_count;
 #define USART0_TXBUFF_COUNT_MAX			(1024u)	/*串口0的数据发送缓冲区大小*/
 
 /*对外RS485*/
-#define USART2_RX_PIN          		MCU_GPIO_PIN(GPIO_PIN_,9) 
-#define USART2_RX_GPIO     	   		MCU_GPIO_(GPIO,D)
-#define USART2_TX_PIN          		MCU_GPIO_PIN(GPIO_PIN_,8) 
-#define USART2_TX_GPIO     	    	MCU_GPIO_(GPIO,D)
+// #define USART2_RX_PIN          		MCU_GPIO_PIN(GPIO_PIN_,9) 
+// #define USART2_RX_GPIO     	   		MCU_GPIO_(GPIO,D)
+// #define USART2_TX_PIN          		MCU_GPIO_PIN(GPIO_PIN_,8) 
+// #define USART2_TX_GPIO     	    	MCU_GPIO_(GPIO,D)
+#define USART2_RX_PIN          		MCU_GPIO_PIN(GPIO_PIN_,11) 
+#define USART2_RX_GPIO     	   		MCU_GPIO_(GPIO,C)
+#define USART2_TX_PIN          		MCU_GPIO_PIN(GPIO_PIN_,10) 
+#define USART2_TX_GPIO     	    	MCU_GPIO_(GPIO,C)
+void gd_eval_com_init(void);
 
 #define USART2_TXBUFF_COUNT_MAX			(1024u)	/*串口2的数据发送缓冲区大小*/
 
@@ -303,13 +309,13 @@ void gd32f4x_usart_init(void);
 #define USART0_RXBUFF_COUNT_MAX			(1024u)	/*串口0的数据接收缓冲区大小*/
 
 #define USART2_TXBUFF_COUNT_MAX			(1024u)	/*串口2的数据发送缓冲区大小*/
-#define USART2_RXBUFF_COUNT_MAX			(1024u)	/*串口2的数据接收缓冲区大小*/
+#define USART2_RXBUFF_COUNT_MAX			(4096u)	/*串口2的数据接收缓冲区大小*/
 
 #define UART3_TXBUFF_COUNT_MAX			(1024u)	/*串口3的数据发送缓冲区大小*/
 #define UART3_RXBUFF_COUNT_MAX			(1024u)	/*串口3的数据接收缓冲区大小*/
 
 extern uint8_t  Uart3RxBuff[UART3_RXBUFF_COUNT_MAX];			    /*串口3的数据接收缓冲区*/
-
+extern uint8_t  Usart2RxBuff[USART2_RXBUFF_COUNT_MAX];
 void gd32f4x_dma_init(void);
 void gd32f4x_dma1ch0_init(void);
 

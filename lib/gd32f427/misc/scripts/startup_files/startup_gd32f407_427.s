@@ -62,9 +62,9 @@ __heap_limit
 
 ;               /* reset Vector Mapped to at Address 0 */
                 AREA    RESET, DATA, READONLY
-                EXPORT  __Vectors
+                EXPORT  __Vectors 
                 EXPORT  __Vectors_End
-                EXPORT  __Vectors_Size
+                EXPORT  __Vectors_Size 
 
 __Vectors       DCD     __initial_sp                      ; Top of Stack
                 DCD     Reset_Handler                     ; Reset Handler

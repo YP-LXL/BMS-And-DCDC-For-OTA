@@ -1,0 +1,6 @@
+r
+h
+loadbin .pio\build\genericGD32F427VE\firmware.bin, 0x08005000
+r
+g
+exit

@@ -1,87 +1,102 @@
-// #include "ota.h"
+#include "ota.h"
 
 
-// #define OTA_STORAGE_ADDRESS  0x08080000  // 固件存储起始地址
-// #define OTA_BACKUP_ADDRESS   0x080C0000  // 备份固件地址
-// #define OTA_FIRMWARE_SIZE    (256 * 1024) // 固件大小 256KB
+ota_state_t ota_state = OTA_STATE_IDLE;
 
-// static OTA_CALL_TYPEDEF *ota_succeed_callback = NULL;
-// static OTA_CALL_TYPEDEF *ota_fail_callback = NULL;
+uint8_t header_buf[4];
+uint32_t header_received = 0;
+uint8_t crc_buf[4];
+uint32_t crc_received = 0;
+uint8_t ota_block[OTA_BLOCK_SIZE];
+uint8_t* ota_data_ptr = ota_block;
+uint32_t block_idx = 0;
+uint32_t total_received = 0;
+uint32_t expected_len = 0;
+uint32_t expected_crc = 0;
+uint32_t actual_crc = 0;
 
-// // OTA 环境初始化
-// uint8_t ota_init(void)
-// {
-//     // 可以在这里进行 Flash 分区检查、存储空间准备等
-//     return 0;
-// }
+volatile bool ota_done = false;
+volatile uint32_t ota_last_tick = 0;
+volatile uint8_t time_flag = 0;
 
-// // OTA 固件写入
-// uint8_t ota_write_firmware(uint8_t* p_buf, uint32_t len)
-// {
-//     if (len > OTA_FIRMWARE_SIZE) {
-//         return 1; // 固件超出最大大小
-//     }
-    
-//     // 擦除 Flash 目标区域
-//     if (flash_erase(OTA_STORAGE_ADDRESS, OTA_FIRMWARE_SIZE) != 0) {
-//         return 2; // Flash 擦除失败
-//     }
-    
-//     // 写入固件
-//     if (flash_write(OTA_STORAGE_ADDRESS, p_buf, len) != 0) {
-//         return 3; // Flash 写入失败
-//     }
-    
-//     return 0; // 成功
-// }
+uint8_t ring_buffer[RING_BUFFER_SIZE];
+volatile uint32_t ring_head = 0;
+volatile uint32_t ring_tail = 0;
 
-// // OTA 固件验证
-// uint8_t ota_verify_firmware(uint8_t* p_firmware, uint32_t len, uint16_t verify_crc16)
-// {
-//     uint16_t calculated_crc = crc16_calculate(p_firmware, len);
-//     if (calculated_crc != verify_crc16) {
-//         return 1; // 校验失败
-//     }
-//     return 0; // 校验成功
-// }
+uint32_t i = 0;
+uint32_t pages = 0;
+uint32_t data_len  =0;
 
-// // OTA 应用更新
-// uint8_t ota_apply_update(void)
-// {
-//     // 这里通常涉及 Bootloader 逻辑，例如设置启动标志并复位
-//     flash_set_boot_flag(OTA_STORAGE_ADDRESS);
-//     system_reset(); // 复位系统以启动新固件
-//     return 0;
-// }
+uint32_t ota_calc_crc32(uint32_t flash_addr, uint32_t len) {
+    crc_data_register_reset();
+    for (i = 0; i < len; i += 4) {
+        uint32_t data = *(uint32_t*)(flash_addr + i);
+        crc_single_data_calculate(data);
+    }
+    return crc_data_register_read();
+}
 
-// // OTA 回滚
-// uint8_t ota_rollback(void)
-// {
-//     // 将备份固件恢复到应用区域
-//     if (flash_erase(OTA_STORAGE_ADDRESS, OTA_FIRMWARE_SIZE) != 0) {
-//         return 1; // Flash 擦除失败
-//     }
-//     if (flash_copy(OTA_BACKUP_ADDRESS, OTA_STORAGE_ADDRESS, OTA_FIRMWARE_SIZE) != 0) {
-//         return 2; // Flash 复制失败
-//     }
-    
-//     // 复位系统启动旧固件
-//     system_reset();
-//     return 0;
-// }
+void flash_erase(uint32_t addr, uint32_t size) {
+    pages = (size + 0xFFF) / 0x1000;
+    fmc_unlock();
+    for ( i = 0; i < pages; i++) {
+        fmc_page_erase(addr + i * 0x1000);
+    }
+    fmc_lock();
+}
 
-// // 成功回调注册
-// uint8_t ota_set_success_callback(OTA_CALL_TYPEDEF *ota_succeed_callback_fn)
-// {
-//     ota_succeed_callback = ota_succeed_callback_fn;
-//     return 0;
-// }
+void flash_write(uint32_t addr, uint8_t *data, uint32_t len) {
+    fmc_unlock();
+    for ( i = 0; i < len; i += 4) {
+        uint32_t word = 0xFFFFFFFF;
+        memcpy(&word, data + i, (len - i) >= 4 ? 4 : (len - i));
+        fmc_word_program(addr + i, word);
+    }
+    fmc_lock();
+}
 
-// // 失败回调注册
-// uint8_t ota_set_fail_callback(OTA_CALL_TYPEDEF *ota_fail_callback_fn)
-// {
-//     ota_fail_callback = ota_fail_callback_fn;
-//     return 0;
-// }
+void set_ota_flag(void) {
+    uint32_t temp_buffer[FLASH_PAGE_SIZE / 4];
+    uint32_t offset = 0; 
+    uint32_t page_addr = OTA_FLAG_ADDR;
 
+    for (i = 0; i < FLASH_PAGE_SIZE / 4; i++) {
+        temp_buffer[i] = *(uint32_t *)(page_addr + i * 4);
+    }
 
+    temp_buffer[offset] = OTA_FLAG_VALUE;
+
+    fmc_unlock();
+    fmc_page_erase(page_addr);
+		
+    for (i = 0; i < FLASH_PAGE_SIZE / 4; i++) {
+        fmc_word_program(page_addr + i * 4, temp_buffer[i]);
+    }
+    fmc_lock();
+}
+
+uint32_t ring_buffer_read(uint8_t* dest, uint32_t max_len) {
+    uint32_t count = 0;
+    while (ring_tail != ring_head && count < max_len) {
+        dest[count++] = ring_buffer[ring_tail];
+        ring_tail = (ring_tail + 1) % RING_BUFFER_SIZE;
+    }
+    return count;
+}
+
+void ota_reset_state(void) {
+    ota_state = OTA_STATE_HEADER;
+	time_flag = 0;
+    header_received = 0;
+    crc_received = 0;
+    expected_len = 0;
+    expected_crc = 0;
+    actual_crc = 0;
+    total_received = 0;
+    block_idx = 0;
+    ota_data_ptr = ota_block;
+    ota_done = false;
+    memset(header_buf, 0, sizeof(header_buf));
+    memset(crc_buf, 0, sizeof(crc_buf));
+    memset(ota_block, 0xFF, sizeof(ota_block));
+}

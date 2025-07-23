@@ -6,14 +6,14 @@
 #include "project_config.h"
 #include "gd32f4xx.h"
 #include "logger.h"
-
+#include "atcommand.h"
 #include "test_task.h"
 // #include "collect_task.h"
 // #include "communicate_task.h"
 // #include "protect_task.h"
 /* 测试 */
-#define         test_task_stack_words                                   5000 /* 占用空间字为单位 */
-#define         test_task_priority                                      1   /* 优先级 */
+#define         test_task_stack_words                                   256 /* 占用空间字为单位 */
+#define         test_task_priority                                      7   /* 优先级 */
 StaticTask_t    test_task_buffer;
 StackType_t     test_task_stack[test_task_stack_words];
 TaskHandle_t    test_task_handle;
@@ -114,6 +114,12 @@ TaskHandle_t period_alarm_task_handle;
 StackType_t  period_alarm_task_stack[period_alarm_task_size];
 StaticTask_t period_alarm_task_buffer;
 
+#define             ota_task_size                   4096
+#define             ota_task_priority               1
+TaskHandle_t ota_task_handle;
+StackType_t  ota_task_stack[ota_task_size];
+StaticTask_t ota_task_buffer;
+
 /**
  * @函数名称: all_init()
  * @功能描述: 所有硬件接口层初始化
@@ -124,23 +130,28 @@ StaticTask_t period_alarm_task_buffer;
 static void all_init(void)
 {
     // uint8_t val = 0;
+    SCB->VTOR = 0x08005000;
+    //SCB->VTOR = FLASH_BASE | 0x5000;
     gd32f4x_system_clock_init();
     parameter_ram_init();
     /* GPIO初始化 */
 	gd32f4x_gpio_init();
     /* 串口初始化 */
-    gd32f4x_usart_init();
+    // gd32f4x_usart_init();
+    gd_eval_com_init();
 
     printf("***bms_start Tver=%s ***\r\n",CONCAT_STR_NUM(SOFTWARE_NAME_V,SOFTWARE_V_NUM));
-
+    //usart_data_transmit(USART2,(uint8_t)1);
     /* DMA初始化 */
     gd32f4x_dma_init();   
-    
+
+    rcu_periph_clock_enable(RCU_CRC);
+
     uint8_t ret = gd32f4x_usart2_set_receive_callback(usart2_data_process);
     /*定时器初始化*/
     gd32f4x_timer_init();  
     /*ADC初始化*/
-    gd32f4x_adc_init();   
+    gd32f4x_adc_init();    
     /*CAN0初始化*/
     gd32f4x_can0_init(BAUD_500K);           
 
@@ -156,7 +167,7 @@ static void all_init(void)
     gd32f4x_spi_init(); 
 
 
-
+    ATcmd_init();
     
 
     
@@ -183,7 +194,7 @@ static void all_init(void)
 int main(void)
 {
     all_init();
-
+    printf("123\r\n");
 
 
 #if TEST_LOW_POWER
@@ -200,7 +211,23 @@ int main(void)
                                          test_task_priority, 
                                          test_task_stack, 
                                         &test_task_buffer);
-
+    
+    ota_task_handle = xTaskCreateStatic(
+                                        /* 执行任务的函数 */
+                                        ota_task,
+                                        /* 任务的文本名称 */
+                                        "ota_task",
+                                        /* 数据索引的数量 */
+                                        ota_task_size,
+                                        /* 任务中传入的参数 */
+                                        (void*)0,
+                                        /* 任务创建的优先级 */
+                                        ota_task_priority,
+                                        /* 作为任务栈的数组 */
+                                        ota_task_stack,
+                                        /* 保存任务数据结构的变量 */
+                                        &ota_task_buffer);
+                                        
     // counttest_task_handle = xTaskCreateStatic(counttest_task, 
     //                                     "counttest_task", 
     //                                      counttest_task_stack_words, 
