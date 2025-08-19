@@ -12,7 +12,7 @@
 #include "common.h"
 #include "gd32f4x.h"
 #include "parameter.h"
-
+#include "ota.h"
 
 /* ***********************环形队列************************* */
 #define DCDC_BLOCK_QUEUE_SIZE  2         /* 队列最多存储的块数 */

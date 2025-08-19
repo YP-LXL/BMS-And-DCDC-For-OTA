@@ -21,7 +21,8 @@ void gd32f4x_delay_us(uint32_t nus);
 void gd32f4x_delay_ms(uint16_t nms);
 void gd32f4x_system_clock_init(void);
 
-
+/* canid*/
+#define TARGET_EXT_ID                       0xCE10000
 // extern uint32_t duty_data;
 
 #define  MCU_GPIO_PIN(x,y)         x##y
@@ -226,10 +227,16 @@ extern uint32_t exitirq_count;
 
 /* 用于USART （UASRT）和引脚的设置, TX = P, RX = P */
 /*与底板的通信口*/
-#define USART0_RX_PIN          		MCU_GPIO_PIN(GPIO_PIN_,11) 
-#define USART0_RX_GPIO     	   		MCU_GPIO_(GPIO,C)
-#define USART0_TX_PIN          		MCU_GPIO_PIN(GPIO_PIN_,10) 
-#define USART0_TX_GPIO     	    	MCU_GPIO_(GPIO,C)
+#define LOG_LEVEL 0
+
+#define LOG_ERR(...)  do { printf("[ERR] "); printf(__VA_ARGS__);} while(0)
+#define LOG_INFO(...) do { if (LOG_LEVEL >= 1) { printf("[INFO] "); printf(__VA_ARGS__); } } while(0)
+#define LOG_DEBUG(...) do { if (LOG_LEVEL >= 2) { printf("[DEBUG] "); printf(__VA_ARGS__);} } while(0)
+
+#define USART0_RX_PIN          		MCU_GPIO_PIN(GPIO_PIN_,10) 
+#define USART0_RX_GPIO     	   		MCU_GPIO_(GPIO,A)
+#define USART0_TX_PIN          		MCU_GPIO_PIN(GPIO_PIN_,9) 
+#define USART0_TX_GPIO     	    	MCU_GPIO_(GPIO,A)
 
 #define USART0_TXBUFF_COUNT_MAX			(1024u)	/*串口0的数据发送缓冲区大小*/
 
@@ -242,8 +249,7 @@ extern uint32_t exitirq_count;
 #define USART2_RX_GPIO     	   		MCU_GPIO_(GPIO,C)
 #define USART2_TX_PIN          		MCU_GPIO_PIN(GPIO_PIN_,10) 
 #define USART2_TX_GPIO     	    	MCU_GPIO_(GPIO,C)
-void gd_eval_com_init(void);
-
+void user_can_rx_callback(can_receive_message_struct *msg);
 #define USART2_TXBUFF_COUNT_MAX			(1024u)	/*串口2的数据发送缓冲区大小*/
 
 /*串口屏*/
@@ -255,6 +261,7 @@ void gd_eval_com_init(void);
 #define RX_DATA_BUFF_QUANTITY         							(1024u)
 /*#define TX_DATA_BUFF_QUANTITY         							(500u)*/
 #define BMS_MODBUSS_ADD                							(1u)
+
 
 /* DCDC通信口 */
 void gd32f4x_usart0_init(uint32_t baudrate);
@@ -300,8 +307,9 @@ uint8_t gd32f4x_uart3_set_receive_callback(fun_usart_recive_callback receive_cal
 
 /* 串口所有初始化 */
 void gd32f4x_usart_init(void);
-
-
+static void (*usart2_dma_callback)(void) = NULL;
+extern volatile bool modbus_dma_done_flag;
+void modbus_data_send_callback(void);
 /* DMA************************************************************************** */
 
 #define DMA1_CH0_BUFF_MAX 				(5u)/*DMA0_CH1传输通道最大数据的个数*/
@@ -316,6 +324,7 @@ void gd32f4x_usart_init(void);
 
 extern uint8_t  Uart3RxBuff[UART3_RXBUFF_COUNT_MAX];			    /*串口3的数据接收缓冲区*/
 extern uint8_t  Usart2RxBuff[USART2_RXBUFF_COUNT_MAX];
+// extern uint8_t  Usart2TxBuff[USART2_TXBUFF_COUNT_MAX];
 void gd32f4x_dma_init(void);
 void gd32f4x_dma1ch0_init(void);
 
@@ -460,6 +469,13 @@ typedef  void(* can0_error_handle_call_back_func)();
 #define CAN0_RX_AF GPIO_AF_9
 #define CAN0_TX_PIN GPIO_PIN_9
 #define CAN0_RX_PIN GPIO_PIN_8
+// #define CAN0_RCU_CLOCK RCU_GPIOA
+// #define CAN0_TX_PORT GPIOA
+// #define CAN0_RX_PORT GPIOA
+// #define CAN0_TX_AF GPIO_AF_9
+// #define CAN0_RX_AF GPIO_AF_9
+// #define CAN0_TX_PIN GPIO_PIN_12
+// #define CAN0_RX_PIN GPIO_PIN_11
 
 #define CAN0_INIT_FLAG_NONE 0               /* 未初始化 */
 #define CAN0_INIT_FLAG_OK   1               /* 初始化成功 */
@@ -492,9 +508,13 @@ uint8_t can0_check_whitelist_sf(uint32_t* filter_ids, uint8_t num_filters);
 void gd32f4x_can0_rx_irqn_enable(void);
 void gd32f4x_can0_rx_irqn_disable(void);
  void can0_process_cycle(uint32_t cycle_time);
+
+ void CAN0_RX0_IRQHandler(void);
 /* CAN1************************************************************************** */
 typedef  void(* can1_receive_call_back_func)(can_receive_message_struct* );
-typedef  void(* can1_error_handle_call_back_func)();
+// typedef  void(* can1_error_handle_call_back_func)();
+typedef void (*can1_error_handle_call_back_func)(uint8_t error_code); // 修改此处：带参数
+extern can1_error_handle_call_back_func can1_error_handle;
 /* can1的黑白名单功能，最多14个滤波器 */
 
 #define CAN1_RCU_CLOCK RCU_GPIOB
@@ -510,10 +530,16 @@ uint8_t can1_check_whitelist_ef(uint32_t* filter_ids, uint8_t num_filters);
 uint8_t can1_receive_register(can1_receive_call_back_func call_back);
 extern uint8_t can1_send_msg(uint32_t id, uint8_t* data, uint8_t len);
 uint8_t can1_error_handle_register(can1_error_handle_call_back_func call_back);
+void can1_error_handler(uint8_t error_code);
+void request_resend_packet(uint16_t packet_no,uint8_t error_code);
+void send_packet_ack(uint16_t packet_no, uint8_t status_code);
+void send_ota_result(uint8_t success);
 uint8_t can1_check_whitelist_sf(uint32_t* filter_ids, uint8_t num_filters);
 void gd32f4x_can1_rx_irqn_enable(void);
 void gd32f4x_can1_rx_irqn_disable(void);
-
+void handle_ota_info_packet(uint8_t *data);
+void handle_ota_data_packet(uint8_t *data, uint16_t packet_num);
+void verify_ota_firmware(void);
 /* 低功耗睡眠************************************************************************** */
 #if 1
 #include "gd32f4xx_can.h"

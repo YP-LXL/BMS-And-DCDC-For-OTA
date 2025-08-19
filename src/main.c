@@ -115,7 +115,7 @@ StackType_t  period_alarm_task_stack[period_alarm_task_size];
 StaticTask_t period_alarm_task_buffer;
 
 #define             ota_task_size                   4096
-#define             ota_task_priority               1
+#define             ota_task_priority               3
 TaskHandle_t ota_task_handle;
 StackType_t  ota_task_stack[ota_task_size];
 StaticTask_t ota_task_buffer;
@@ -130,17 +130,18 @@ StaticTask_t ota_task_buffer;
 static void all_init(void)
 {
     // uint8_t val = 0;
-    SCB->VTOR = 0x08005000;
+    // SCB->VTOR = 0x08005000;
     //SCB->VTOR = FLASH_BASE | 0x5000;
     gd32f4x_system_clock_init();
     parameter_ram_init();
     /* GPIO初始化 */
 	gd32f4x_gpio_init();
     /* 串口初始化 */
-    // gd32f4x_usart_init();
-    gd_eval_com_init();
+    gd32f4x_usart_init();
+    usart0_send_data('A');
+    
 
-    printf("***bms_start Tver=%s ***\r\n",CONCAT_STR_NUM(SOFTWARE_NAME_V,SOFTWARE_V_NUM));
+    LOG_INFO("***bms_start Tver=%s ***\r\n",CONCAT_STR_NUM(SOFTWARE_NAME_V,SOFTWARE_V_NUM));
     //usart_data_transmit(USART2,(uint8_t)1);
     /* DMA初始化 */
     gd32f4x_dma_init();   
@@ -154,10 +155,13 @@ static void all_init(void)
     gd32f4x_adc_init();    
     /*CAN0初始化*/
     gd32f4x_can0_init(BAUD_500K);           
-
+    
     /*CAN1初始化*/
-    gd32f4x_can1_init(BAUD_500K);  
-
+    gd32f4x_can1_init(BAUD_500K); 
+    uint32_t apb1_freq = rcu_clock_freq_get(CK_APB1);
+    LOG_INFO("APB1 Clock = %lu Hz\r\n", apb1_freq); 
+    can1_receive_register(user_can_rx_callback);
+    can1_error_handle_register(can1_error_handler);
     /* afe初始化--暂时放这里 */
     gd32f4x_i2c1_init(500000);
 
@@ -170,7 +174,8 @@ static void all_init(void)
     ATcmd_init();
     
 
-    
+    // int a[4] = {1,2,3,4};
+    // printf("%d %d %d %d %d\r\n",sizeof(a),sizeof(a[1]),sizeof(a[0]),sizeof(*a),sizeof(&a));
     // /* 日志打印管理 */
     // log_set_enable(1);
     // log_set_level(LOG_LEVEL_DEBUG);
@@ -194,7 +199,7 @@ static void all_init(void)
 int main(void)
 {
     all_init();
-    printf("123\r\n");
+    printf("123456\r\n");
 
 
 #if TEST_LOW_POWER

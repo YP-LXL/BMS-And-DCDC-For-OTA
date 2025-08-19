@@ -315,7 +315,7 @@ static uint8_t high_voltage_drive_on_or_off(char* action)
         if(strcmp(action,action_name[0]) == 0) {
             HIGH_VOLTAGE_DRIVE_EN_ON();
         } else if(strcmp(action,action_name[1]) == 0) {
-            HIGH_VOLTAGE_DRIVE_EN_OFF();
+            // HIGH_VOLTAGE_DRIVE_EN_OFF();
         } else {
             return_value = 1;
         }

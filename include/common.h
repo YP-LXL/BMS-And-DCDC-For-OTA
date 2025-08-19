@@ -20,7 +20,6 @@
 #include "sh367309.h"
 #include "gd25q32esig.h"
 #include "atcommand.h"
-
 // #include "dcdc_communicate.h"
 
 // #include "board.h"

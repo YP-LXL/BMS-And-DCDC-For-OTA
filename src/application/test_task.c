@@ -25,6 +25,9 @@
 #define BLOCK_SIZE 0x10000   // 块大小64KB（65536字节）
 #define TOTAL_BLOCKS 64      // 总块数（4MB / 64KB = 64块）
 
+
+
+
 #endif
 
 /* 调试接口接收 */
@@ -101,39 +104,13 @@ void test_task(void* pvParameters)
  * @返回值: 无
  */
 void ota_task(void *pvParameters) {
-    static uint8_t temp_buf[512];
-
-    printf("[OTA] Task started\r\n");
-    ota_reset_state();
-
-    while (1) {
-        uint32_t len = ring_buffer_read(temp_buf, sizeof(temp_buf));
-        if (len > 0) {
-            usart2_data_process(temp_buf, len);
-            ota_last_tick = xTaskGetTickCount();
+    
+    while(1) {
+         if (modbus_dma_done_flag) {
+            modbus_dma_done_flag = false;
+            modbus_data_send_callback();  // 注意此时是非中断上下文调用
         }
-        
-        if (ota_done && ota_state == OTA_STATE_DONE) {
-            actual_crc = ota_calc_crc32(BACKUP_ADDR, expected_len);
-            printf("[OTA] CRC check: expected=%08X, actual=%08X\r\n", expected_crc, actual_crc);
-            if (expected_crc == actual_crc) {
-                set_ota_flag();
-                vTaskDelay(500);
-                NVIC_SystemReset();
-            } else {
-                printf("[OTA] CRC error. Resetting state.\r\n");
-                ota_reset_state();
-            }
-        }
-
-        if (time_flag && ota_state != OTA_STATE_IDLE && ota_state < OTA_STATE_DONE) {
-            if ((xTaskGetTickCount() - ota_last_tick) * portTICK_PERIOD_MS >= OTA_TIMEOUT_MS) {
-                printf("[OTA] Timeout. Resetting state.\r\n");
-                ota_reset_state();
-            }
-        }
-
-        vTaskDelay(pdMS_TO_TICKS(10));  // Reduce CPU load
+        vTaskDelay(pdMS_TO_TICKS(10));  // 每秒发送一次
     }
 }
 

@@ -11,6 +11,7 @@
 // #include "gateway_communicate.h"
 #include "board.h" 
 #include "parameter.h"
+#include "gd32f4x.h"
 // #include "period_task.h"
 void test_task(void *pvParameters);
 void ota_task(void *pvParameters);
@@ -22,4 +23,5 @@ uint8_t test_block_full_operation(uint32_t block_num);
 uint8_t Hash_test(void);
 uint8_t test_chip_full_operation(void); 
 void generate_test_data(uint8_t *buffer, uint32_t block_num, uint32_t len);
+
 #endif

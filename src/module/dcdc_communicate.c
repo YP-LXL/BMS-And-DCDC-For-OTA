@@ -334,20 +334,20 @@ T_DCDC_MODBUS_MASTER_TYPDEF g_modbus_master = {0};
  * @输出: 无
  * @返回值: CRC16 校验值
  */
-static uint16_t modbus_crc16(uint8_t *data, uint16_t length) {
-    uint16_t crc = 0xFFFF; // 初始值为 0xFFFF
-    for (uint16_t i = 0; i < length; i++) {
-        crc ^= data[i]; // 将当前字节与 CRC 的低 8 位进行异或
-        for (uint8_t j = 0; j < 8; j++) {
-            if (crc & 0x0001) {
-                crc = (crc >> 1) ^ 0xA001; // 右移并与多项式 0xA001 异或
-            } else {
-                crc = crc >> 1; // 直接右移
-            }
-        }
-    }
-    return crc; // 返回最终 CRC 值
-}
+// static uint16_t modbus_crc16(uint8_t *data, uint16_t length) {
+//     uint16_t crc = 0xFFFF; // 初始值为 0xFFFF
+//     for (uint16_t i = 0; i < length; i++) {
+//         crc ^= data[i]; // 将当前字节与 CRC 的低 8 位进行异或
+//         for (uint8_t j = 0; j < 8; j++) {
+//             if (crc & 0x0001) {
+//                 crc = (crc >> 1) ^ 0xA001; // 右移并与多项式 0xA001 异或
+//             } else {
+//                 crc = crc >> 1; // 直接右移
+//             }
+//         }
+//     }
+//     return crc; // 返回最终 CRC 值
+// }
 
 /**
  * @函数名称: dcdc_modbus_master_init
