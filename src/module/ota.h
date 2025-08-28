@@ -98,5 +98,7 @@ void set_ota_flag(void) ;
 uint8_t flash_write(uint32_t addr, uint8_t *data, uint32_t len);
 uint8_t flash_erase(uint32_t addr, uint32_t size);
 uint32_t ota_calc_crc32(uint32_t flash_addr, uint32_t len);
+uint16_t crc16_modbus(uint8_t* _pbuf, uint8_t _uslen);
 uint16_t modbus_crc16(uint8_t *data, uint16_t length);
+void flash_read(uint32_t addr, uint8_t *data, uint32_t len);
 #endif

@@ -6,7 +6,7 @@
 #include "gd32f4x.h"
 #include "atcommand.h"
 #include "gd25q32esig.h"
-
+#include "timers.h"
 /*  单个地址测试  */
 #define TEST_ADDRESS 0x00001000  // 测试地址，确保该地址未被使用
 #define BUFFER_SIZE 1
@@ -47,7 +47,6 @@ uint8_t status;
 // uint8_t ret;
 // uint32_t i;
 // bool verify_ok = true;
-
 
 void debug_recive(uint8_t* p_data, uint32_t len) 
 {
@@ -104,13 +103,23 @@ void test_task(void* pvParameters)
  * @返回值: 无
  */
 void ota_task(void *pvParameters) {
+    // 初始化发送队列
+    tx_queue_head = 0;
+    tx_queue_tail = 0;
+    tx_queue_processing = false;
     
     while(1) {
-         if (modbus_dma_done_flag) {
+        if (modbus_dma_done_flag) {
             modbus_dma_done_flag = false;
-            modbus_data_send_callback();  // 注意此时是非中断上下文调用
+            // 这里不需要额外处理，因为回调函数已经在中断中调用
         }
-        vTaskDelay(pdMS_TO_TICKS(10));  // 每秒发送一次
+        
+        // 处理发送队列
+        if (!usart2_dma_busy && !tx_queue_processing && tx_queue_head != tx_queue_tail) {
+            process_tx_queue();
+        }
+        
+        vTaskDelay(pdMS_TO_TICKS(1));  // 适当延时
     }
 }
 

@@ -130,7 +130,7 @@ StaticTask_t ota_task_buffer;
 static void all_init(void)
 {
     // uint8_t val = 0;
-    // SCB->VTOR = 0x08005000;
+    SCB->VTOR = 0x08005000;
     //SCB->VTOR = FLASH_BASE | 0x5000;
     gd32f4x_system_clock_init();
     parameter_ram_init();
@@ -173,7 +173,7 @@ static void all_init(void)
 
     ATcmd_init();
     
-
+    
     // int a[4] = {1,2,3,4};
     // printf("%d %d %d %d %d\r\n",sizeof(a),sizeof(a[1]),sizeof(a[0]),sizeof(*a),sizeof(&a));
     // /* 日志打印管理 */

@@ -22,7 +22,8 @@ void gd32f4x_delay_ms(uint16_t nms);
 void gd32f4x_system_clock_init(void);
 
 /* canid*/
-#define TARGET_EXT_ID                       0xCE10000
+#define BMS_ID                        0xCE10000
+#define DCDC_ID                       0xCE20000
 // extern uint32_t duty_data;
 
 #define  MCU_GPIO_PIN(x,y)         x##y
@@ -233,6 +234,28 @@ extern uint32_t exitirq_count;
 #define LOG_INFO(...) do { if (LOG_LEVEL >= 1) { printf("[INFO] "); printf(__VA_ARGS__); } } while(0)
 #define LOG_DEBUG(...) do { if (LOG_LEVEL >= 2) { printf("[DEBUG] "); printf(__VA_ARGS__);} } while(0)
 
+#define MAX_MODBUS_FRAME_SIZE (6 + 128 + 2) // 最大帧长度
+#define TX_QUEUE_SIZE 10
+
+extern volatile uint8_t tx_queue_head;
+extern volatile uint8_t tx_queue_tail;
+extern volatile bool tx_queue_processing;
+extern volatile bool usart2_dma_busy;
+extern volatile bool modbus_dma_done_flag;
+
+static void send_modbus_data_packet(uint16_t packet_num, uint8_t *payload, uint16_t payload_len, void (*cb)(void));
+static void (*usart2_dma_callback)(void) = NULL;
+void usart2_dma_send_async(uint8_t *data, uint16_t len, void (*cb)(void));
+static void info_packet_sent_callback(void);
+void modbus_data_send_callback(void);
+void handle_ota_info_packet(uint8_t *data);
+void handle_ota_data_packet(uint8_t *data, uint16_t packet_num);
+void verify_ota_firmware(void);
+void request_resend_packet(uint16_t packet_no,uint8_t error_code);
+void send_packet_ack(uint16_t packet_no, uint8_t status_code);
+void send_ota_result(uint8_t success);
+
+
 #define USART0_RX_PIN          		MCU_GPIO_PIN(GPIO_PIN_,10) 
 #define USART0_RX_GPIO     	   		MCU_GPIO_(GPIO,A)
 #define USART0_TX_PIN          		MCU_GPIO_PIN(GPIO_PIN_,9) 
@@ -307,9 +330,6 @@ uint8_t gd32f4x_uart3_set_receive_callback(fun_usart_recive_callback receive_cal
 
 /* 串口所有初始化 */
 void gd32f4x_usart_init(void);
-static void (*usart2_dma_callback)(void) = NULL;
-extern volatile bool modbus_dma_done_flag;
-void modbus_data_send_callback(void);
 /* DMA************************************************************************** */
 
 #define DMA1_CH0_BUFF_MAX 				(5u)/*DMA0_CH1传输通道最大数据的个数*/
@@ -531,15 +551,9 @@ uint8_t can1_receive_register(can1_receive_call_back_func call_back);
 extern uint8_t can1_send_msg(uint32_t id, uint8_t* data, uint8_t len);
 uint8_t can1_error_handle_register(can1_error_handle_call_back_func call_back);
 void can1_error_handler(uint8_t error_code);
-void request_resend_packet(uint16_t packet_no,uint8_t error_code);
-void send_packet_ack(uint16_t packet_no, uint8_t status_code);
-void send_ota_result(uint8_t success);
 uint8_t can1_check_whitelist_sf(uint32_t* filter_ids, uint8_t num_filters);
 void gd32f4x_can1_rx_irqn_enable(void);
 void gd32f4x_can1_rx_irqn_disable(void);
-void handle_ota_info_packet(uint8_t *data);
-void handle_ota_data_packet(uint8_t *data, uint16_t packet_num);
-void verify_ota_firmware(void);
 /* 低功耗睡眠************************************************************************** */
 #if 1
 #include "gd32f4xx_can.h"

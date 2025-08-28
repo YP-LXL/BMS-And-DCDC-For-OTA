@@ -1,6 +1,6 @@
 
 #include "gd32f4x.h"
-volatile bool usart2_dma_busy = false;
+
 const uint8_t CRC8Table[]=
 {			
 	0x00,0x07,0x0E,0x09,0x1C,0x1B,0x12,0x15,0x38,0x3F,0x36,0x31,0x24,0x23,0x2A,0x2D,
@@ -600,19 +600,112 @@ void gd32f4x_usart2_init(uint32_t baudrate)
 /**
  * DMA0通道3中断服务函数（串口2发送完成）
  */
+volatile bool usart2_dma_busy = false;
 volatile bool modbus_dma_done_flag = false;
+// 添加一个发送队列机制
+typedef struct {
+    uint8_t data[MAX_MODBUS_FRAME_SIZE];
+    uint16_t len;
+    void (*callback)(void);
+} tx_queue_item_t;
+
+tx_queue_item_t tx_queue[TX_QUEUE_SIZE];
+volatile uint8_t tx_queue_head = 0;
+volatile uint8_t tx_queue_tail = 0;
+volatile bool tx_queue_processing = false;
+
+/**
+ * @函数名称: DMA0_Channel3_IRQHandler
+ * @功能描述: DMA0 通道3中断服务函数，处理 USART2 TX 发送完成事件
+ * @输入: 无
+ * @输出: 无
+ * @返回值: 无
+ */
 void DMA0_Channel3_IRQHandler(void)
 {
     if (dma_interrupt_flag_get(DMA0, DMA_CH3, DMA_INT_FLAG_FTF)) {
         dma_interrupt_flag_clear(DMA0, DMA_CH3, DMA_INT_FLAG_FTF);
         usart2_dma_busy = false;
-        // 打印DMA完成日志（包含当前包号）
+        
+        // 打印DMA完成日志
         LOG_INFO("[DMA Done] Packet 0x%04X sent\n", ota_ctx.current_sending_packet);
-        // 调用回调函数（触发下一包发送）
+        
+        // 设置完成标志
         modbus_dma_done_flag = true;
+        
+        // 如果有回调函数，调用它
+        if (usart2_dma_callback != NULL) {
+            usart2_dma_callback();
+            usart2_dma_callback = NULL; // 清除回调函数
+        }
+        
+        // 处理发送队列中的下一个项目
+        tx_queue_processing = false;
+        process_tx_queue();
     }
 }
-static void send_modbus_data_packet(uint16_t packet_num, uint8_t *payload, uint16_t payload_len, void (*cb)(void));
+
+/**
+ * @函数名称: process_tx_queue
+ * @功能描述: 处理发送队列，取出下一个数据包并启动 DMA 异步发送
+ * @输入: 无
+ * @输出: 无
+ * @返回值: 无
+ */
+void process_tx_queue(void)
+{
+    if (tx_queue_processing || tx_queue_head == tx_queue_tail) {
+        return; // 正在处理或队列为空
+    }
+    
+    tx_queue_processing = true;
+    uint8_t next_index = tx_queue_tail;
+    tx_queue_tail = (tx_queue_tail + 1) % TX_QUEUE_SIZE;
+    
+    // 发送队列中的下一个项目
+    usart2_dma_send_async(tx_queue[next_index].data, 
+                         tx_queue[next_index].len, 
+                         tx_queue[next_index].callback);
+}
+
+/**
+ * @函数名称: add_to_tx_queue
+ * @功能描述: 将数据包添加到发送队列，如果队列空闲立即启动发送
+ * @输入: data - 数据指针
+ *        len  - 数据长度
+ *        cb   - 发送完成后的回调函数
+ * @输出: 无
+ * @返回值: true  - 添加成功
+ *          false - 队列已满
+ */
+bool add_to_tx_queue(uint8_t *data, uint16_t len, void (*cb)(void))
+{
+    uint8_t next_head = (tx_queue_head + 1) % TX_QUEUE_SIZE;
+    if (next_head == tx_queue_tail) {
+        LOG_ERR("TX Queue full!");
+        return false;
+    }
+    
+    memcpy(tx_queue[tx_queue_head].data, data, len);
+    tx_queue[tx_queue_head].len = len;
+    tx_queue[tx_queue_head].callback = cb;
+    tx_queue_head = next_head;
+    
+    // 如果没有正在处理的项目，立即开始处理
+    if (!tx_queue_processing && !usart2_dma_busy) {
+        process_tx_queue();
+    }
+    
+    return true;
+}
+
+/**
+ * @函数名称: start_modbus_data_transfer
+ * @功能描述: 启动 Modbus OTA 数据分包传输（最大128字节/包）
+ * @输入: 无
+ * @输出: 无
+ * @返回值: 无
+ */
 void start_modbus_data_transfer(void)
 {
     uint32_t total_len = ota_ctx.firmware_len;
@@ -620,42 +713,54 @@ void start_modbus_data_transfer(void)
     uint16_t packet_num = ota_ctx.current_tx_packet;
 
     if (offset >= total_len) {
-        LOG_ERR("Modbus OTA transmission completed.\n");
+        LOG_INFO("Modbus OTA transmission completed.\n");
         return;
     }
 
     uint16_t chunk_len = (total_len - offset >= 128) ? 128 : (total_len - offset);
     uint8_t *payload = (uint8_t *)(ota_ctx.flash_addr + offset);
 
-     // 打印下一包准备信息（剩余长度）
-    // LOG_INFO("[Prepare Next] Packet=0x%04X, offset=%lu, chunk_len=%u, remaining=%lu\n",
-    //        packet_num, offset, chunk_len, total_len - offset);
-
     // 保存当前状态
     ota_ctx.current_chunk_len = chunk_len;
 
-    //  仅发送，不立即更新 offset
-     send_modbus_data_packet(packet_num, (uint8_t*)(ota_ctx.flash_addr + offset), chunk_len, modbus_data_send_callback);
+    // 发送数据包
+    send_modbus_data_packet(packet_num, payload, chunk_len, modbus_data_send_callback);
 }
 
-// DMA完成回调后触发，安全地推进状态
+/**
+ * @函数名称: modbus_data_send_callback
+ * @功能描述: 数据包 DMA 发送完成后的回调函数，推进状态并发送下一包
+ * @输入: 无
+ * @输出: 无
+ * @返回值: 无
+ */
 void modbus_data_send_callback(void)
 {
     ota_ctx.tx_offset += ota_ctx.current_chunk_len;
     uint16_t sent_packet = ota_ctx.current_tx_packet; // 刚发送完成的包号
     ota_ctx.current_tx_packet++;
-    // 打印发送进度（已发送包号、当前偏移、下一包号）
-    // LOG_INFO("[Data Done] Sent packet=0x%04X, tx_offset=%lu, next=0x%04X\n", 
-    //        sent_packet, ota_ctx.tx_offset, ota_ctx.current_tx_packet);
+    
+    LOG_INFO("[Data Done] Sent packet=0x%04X, tx_offset=%lu, next=0x%04X\n", 
+           sent_packet, ota_ctx.tx_offset, ota_ctx.current_tx_packet);
+    //当以115200波特率发送时，增加帧间延时，比如 1ms,会阻塞任务，若以9600发送，不需延时
+    // vTaskDelay(pdMS_TO_TICKS(1));
+
     start_modbus_data_transfer(); // 继续发送下一包
 }
 
-
-void usart2_dma_send_async(uint8_t *data, uint16_t len, void (*cb)(void));
-static void info_packet_sent_callback(void);
+/**
+ * @函数名称: send_modbus_info_packet
+ * @功能描述: 发送 Modbus OTA 信息包（固件长度和 CRC 校验）
+ * @输入: firmware_len - 固件长度
+ *        firmware_crc - 固件 CRC16 校验值
+ * @输出: 无
+ * @返回值: 无
+ */
 static void send_modbus_info_packet(uint32_t firmware_len, uint16_t firmware_crc)
 {
-    uint8_t buf[14];  // 固定长度：1（地址）+1（功能码）+2（包号）+2（长度）+6（payload）+2（CRC）=14
+    // 使用全局缓冲区而不是局部变量
+    uint8_t buf[14];
+    
     buf[0] = MODBUS_DEVICE_ADDR;    // 0x01
     buf[1] = MODBUS_FUNC_CODE;      // 0x40
     buf[2] = 0x00;  // 包号高（0x0000）
@@ -663,7 +768,7 @@ static void send_modbus_info_packet(uint32_t firmware_len, uint16_t firmware_crc
     buf[4] = 0x00;  // 长度高（payload_len=6）
     buf[5] = 0x06;  // 长度低（payload为6字节）
 
-    // 关键修改：填充4字节固件长度（大端）
+    // 填充4字节固件长度（大端）
     buf[6] = (firmware_len >> 24) & 0xFF;  // 长度第4字节
     buf[7] = (firmware_len >> 16) & 0xFF;  // 长度第3字节
     buf[8] = (firmware_len >> 8) & 0xFF;   // 长度第2字节
@@ -680,11 +785,18 @@ static void send_modbus_info_packet(uint32_t firmware_len, uint16_t firmware_crc
     // 标记当前发送的是info包（包号0x0000）
     ota_ctx.current_sending_packet = 0x0000;
     LOG_INFO("[Send Info] Len=14, firmware_len=%lu, crc=0x%04X\n", firmware_len, firmware_crc);
-    // 传入回调，信息包完成后触发第一包发送
-    usart2_dma_send_async(buf, 14, info_packet_sent_callback);
+    
+    // 添加到发送队列
+    add_to_tx_queue(buf, 14, info_packet_sent_callback);
 }
 
-// 信息包发送完成后，启动第一包数据发送
+/**
+ * @函数名称: info_packet_sent_callback
+ * @功能描述: 信息包发送完成后的回调函数，启动第一包数据发送
+ * @输入: 无
+ * @输出: 无
+ * @返回值: 无
+ */
 static void info_packet_sent_callback(void)
 {
     LOG_INFO("[Info Done] Starting first data packet\n");
@@ -693,12 +805,22 @@ static void info_packet_sent_callback(void)
     start_modbus_data_transfer(); // 启动第一包发送
 }
 
+/**
+ * @函数名称: send_modbus_data_packet
+ * @功能描述: 构造并发送一个 Modbus OTA 数据包（带 CRC）
+ * @输入: packet_num  - 数据包序号
+ *        payload     - 数据指针
+ *        payload_len - 数据长度
+ *        cb          - 发送完成后的回调函数
+ * @输出: 无
+ * @返回值: 无
+ */
 static void send_modbus_data_packet(uint16_t packet_num, uint8_t *payload, uint16_t payload_len, void (*cb)(void))
 {
     LOG_INFO("Send packet %u len=%u\n", packet_num, payload_len);
 
-    // 正确的大小：6字节头 + payload + 2字节CRC
-    uint8_t buf[6 + 128 + 2];  // 用最大payload预分配，避免栈溢出
+    // 使用局部缓冲区准备数据
+    uint8_t buf[6 + 128 + 2];
     uint16_t frame_len = 6 + payload_len + 2;
 
     buf[0] = MODBUS_DEVICE_ADDR;
@@ -719,24 +841,54 @@ static void send_modbus_data_packet(uint16_t packet_num, uint8_t *payload, uint1
     LOG_INFO("[Send Data] Packet=0x%04X, payload_len=%u, total_len=%u\n", 
              packet_num, payload_len, frame_len);
 
-    usart2_dma_send_async(buf, frame_len, cb);
+    // 调试：打印前几个字节和CRC值
+    LOG_DEBUG("Data: %02X %02X %02X %02X %02X %02X... CRC: %02X %02X", 
+             buf[0], buf[1], buf[2], buf[3], buf[4], buf[5],
+             buf[frame_len-2], buf[frame_len-1]);
+
+    // 添加到发送队列
+    add_to_tx_queue(buf, frame_len, cb);
 }
 
 
+/**
+ * @函数名称: usart2_dma_send_async
+ * @功能描述: 通过 DMA 异步发送数据到 USART2
+ * @输入: data - 数据指针
+ *        len  - 数据长度
+ *        cb   - 发送完成回调函数
+ * @输出: 无
+ * @返回值: 无
+ */
 void usart2_dma_send_async(uint8_t *data, uint16_t len, void (*cb)(void)) {
     if (usart2_dma_busy) {
         LOG_ERR("[DMA Busy] Drop packet 0x%04X", ota_ctx.current_sending_packet);
+        // 如果繁忙，应该将数据重新加入队列或采取其他处理措施
+        // 这里简单返回并调用回调函数（如果有）表示发送失败
+        if (cb != NULL) {
+            cb();
+        }
         return;
     }
+    
     usart2_dma_busy = true;
     usart2_dma_callback = cb;
 
     // 关键：先关闭 DMA 再重新配置，避免残留
     dma_channel_disable(DMA0, DMA_CH3);
-    dma_transfer_number_config(DMA0, DMA_CH3, len);       // 严格设置传输长度
-    dma_memory_address_config(DMA0, DMA_CH3, DMA_MEMORY_0, (uint32_t)data); // 绑定数据地址
+    
+    // 确保DMA配置正确
+    dma_memory_address_config(DMA0, DMA_CH3, DMA_MEMORY_0, (uint32_t)data);
+    dma_transfer_number_config(DMA0, DMA_CH3, len);
+    
+    // 清除DMA传输完成中断标志
+    dma_interrupt_flag_clear(DMA0, DMA_CH3, DMA_INT_FLAG_FTF);
+    
     dma_channel_enable(DMA0, DMA_CH3);
 
+    // 使能DMA传输完成中断
+    dma_interrupt_enable(DMA0, DMA_CH3, DMA_CHXCTL_FTFIE);
+    
     // 调试：打印发送数据头3字节，确认数据有效性
     LOG_DEBUG("DMA Send: data[0]=%02X, data[1]=%02X, data[2]=%02X, len=%d", 
              data[0], data[1], data[2], len);
@@ -829,7 +981,7 @@ void gd32f4x_uart3_disable(void)
 void gd32f4x_usart_init(void) 
 {
     gd32f4x_usart0_init(9600); 
-	gd32f4x_usart2_init(115200); 
+	gd32f4x_usart2_init(9600); 
 	// gd32f4x_uart3_init(115200); 
 }
 
@@ -2406,30 +2558,6 @@ void gd32f4x_can1_rx_irqn_disable(void)
  * @输出: 无
  * @返回值: 无
  */
-// void CAN1_RX1_IRQHandler(void)
-// {
-//     /* 定义结构体 */
-//     can_receive_message_struct RxMessage = {0};
-//     uint32_t ulreturn;
-//     /* 临界保护 */
-//     ulreturn = taskENTER_CRITICAL_FROM_ISR(); 
-//     /* 接收数据到结构体 */
-//     can_message_receive(CAN1, CAN_FIFO1, &RxMessage);
-
-//     if (can1_receive_call_back != NULL) {
-//         if (can1_receive_call_back != NULL) {
-//             if(atcommand_can_flag == 1)
-//             {
-//                 can1_send_msg(0x0C000000, RxMessage.rx_data, sizeof(RxMessage.rx_data)); 
-//             }
-//             /* can0_receive_call_back(&RxMessage); */
-//         }
-//         can1_send_msg(0x0C000000, RxMessage.rx_data, sizeof(RxMessage.rx_data)); 
-//         can1_receive_call_back(&RxMessage);
-//     }
-//     taskEXIT_CRITICAL_FROM_ISR(ulreturn); 
-// }
-
 void CAN1_RX1_IRQHandler(void)
 {
     can_receive_message_struct rx_message;
@@ -2443,18 +2571,25 @@ void CAN1_RX1_IRQHandler(void)
     taskEXIT_CRITICAL_FROM_ISR(ulreturn);
 }
 
+/**
+ * @函数名称: user_can_rx_callback()
+ * @功能描述: CAN1回调函数
+ * @输入: 无
+ * @输出: 无
+ * @返回值: 无
+ */
+static uint32_t OTA_FLAG = 0;
 void user_can_rx_callback(can_receive_message_struct *rx_msg)
 {
      // 1. 验证帧属性：扩展帧 + 目标 ID + 8 字节数据
-    if (rx_msg->rx_ff != CAN_FF_EXTENDED || 
-        rx_msg->rx_efid != TARGET_EXT_ID ||  // TARGET_EXT_ID 定义为 0xCE10000
-        rx_msg->rx_dlen != 8) {
+    if (rx_msg->rx_ff != CAN_FF_EXTENDED || (rx_msg->rx_efid != BMS_ID && rx_msg->rx_efid != DCDC_ID) || rx_msg->rx_dlen != 8) {
         LOG_ERR("%X\r\n",rx_msg->rx_efid);
         return;
     }
 
     uint16_t packet_num = (rx_msg->rx_data[0] << 8) | rx_msg->rx_data[1]; // 包号（大端解析）
-
+    
+    OTA_FLAG = rx_msg->rx_efid;
     // 2. 处理信息包（包号 0x0000）
     if (ota_ctx.state == OTA_STATE_IDLE) {
         if (packet_num == 0x0000) {
@@ -2470,13 +2605,18 @@ void user_can_rx_callback(can_receive_message_struct *rx_msg)
     }
 }
 
+/**
+ * @函数名称: handle_ota_info_packet()
+ * @功能描述: 解析信息包函数
+ * @输入: 无
+ * @输出: 无
+ * @返回值: 无
+ */
 void handle_ota_info_packet(uint8_t *data) {
     // 解析信息包字段：
     // data[0-1]: 包号（0x0000，已校验）
-    // data[2-4]: 固件长度（3B 大端）
-    // data[5-6]: CRC16（2B 大端）
-    // data[7]: 设备类型（暂不处理）
-
+    // data[2-5]: 固件长度（3B 大端）
+    // data[6-7]: CRC16（2B 大端）
     uint32_t firmware_len = (data[2] << 24) | (data[3] << 16) | (data[4] << 8) | data[5];
     uint16_t firmware_crc16 = (data[6] << 8) | data[7];
     LOG_INFO("OTA Info: Len=%lu, CRC=0x%04X\n", firmware_len, firmware_crc16);
@@ -2505,13 +2645,13 @@ void handle_ota_info_packet(uint8_t *data) {
     LOG_INFO("OTA Info: Len=%lu, CRC=0x%04X\n", firmware_len, firmware_crc16);
 }
 
-// 补充实现flash_read函数（F427）：从Flash读取指定长度数据
-void flash_read(uint32_t addr, uint8_t *data, uint32_t len) {
-    for (uint32_t i = 0; i < len; i++) {
-        data[i] = *(volatile uint8_t *)(addr + i);  // 按字节读取Flash
-    }
-}
-
+/**
+ * @函数名称: handle_ota_data_packet()
+ * @功能描述: 解析数据包函数
+ * @输入: 无
+ * @输出: 无
+ * @返回值: 无
+ */
 void handle_ota_data_packet(uint8_t *data, uint16_t packet_num) {
     uint8_t payload[6];
     memcpy(payload, &data[2], 6);  // 提取 6 字节
@@ -2527,8 +2667,7 @@ void handle_ota_data_packet(uint8_t *data, uint16_t packet_num) {
     uint32_t remaining = ota_ctx.firmware_len - ota_ctx.received_len;
     uint32_t write_len = (remaining >= 6) ? 6 : remaining;
 
-    // 缓冲数据
-   // 修复1：正确处理缓冲，避免覆盖
+   // 正确处理缓冲，避免覆盖
     if (ota_ctx.buffer_len + write_len > sizeof(ota_ctx.write_buffer)) {
         send_packet_ack(packet_num, 0x01);  // 缓冲溢出，报错
         return;
@@ -2539,7 +2678,7 @@ void handle_ota_data_packet(uint8_t *data, uint16_t packet_num) {
     uint32_t buf_offset = 0;
     bool write_success = true;
 
-    // 修复2：按4字节对齐写入，增加Flash写入验证
+    // 按4字节对齐写入，增加Flash写入验证
     while (ota_ctx.buffer_len - buf_offset >= 4) {
         uint32_t word;
         memcpy(&word, &ota_ctx.write_buffer[buf_offset], 4);
@@ -2563,12 +2702,6 @@ void handle_ota_data_packet(uint8_t *data, uint16_t packet_num) {
             if (can1_error_handle) can1_error_handle(CAN_ERR_FLASH_WRITE);
             break;
         }
-        // if (read_back != word) {
-        //     write_success = false;
-        //     if (can1_error_handle) can1_error_handle(CAN_ERR_FLASH_WRITE);
-        //     break;
-        // }
-
         ota_ctx.received_len += 4;
         buf_offset += 4;
         ota_ctx.retry_count = 0;
@@ -2612,6 +2745,13 @@ void handle_ota_data_packet(uint8_t *data, uint16_t packet_num) {
     }
 }
 
+/**
+ * @函数名称: verify_ota_firmware()
+ * @功能描述: 设置升级或向串口发送固件函数
+ * @输入: 无
+ * @输出: 无
+ * @返回值: 无
+ */
 void verify_ota_firmware(void) {
     // 1. 计算 Flash 中固件的 CRC16
     uint8_t *firmware_data = (uint8_t *)ota_ctx.flash_addr;
@@ -2620,12 +2760,16 @@ void verify_ota_firmware(void) {
     // 2. 校验 CRC
     if (calc_crc == ota_ctx.firmware_crc16) {
         LOG_INFO("OTA Success: CRC matched. Setting flag...\n");
-        
-        send_modbus_info_packet(ota_ctx.firmware_len, ota_ctx.firmware_crc16);
-
         send_ota_result(1);  // 发送成功帧
-        // set_ota_flag(); // 设置 OTA 标志，触发升级       
-        // NVIC_SystemReset();            
+        if (OTA_FLAG == BMS_ID) {
+            /* 实现自我升级 */       
+            set_ota_flag(); // 设置 OTA 标志，触发升级       
+            NVIC_SystemReset();    
+        } 
+        if (OTA_FLAG == DCDC_ID) {
+            /* 将固件数据发送到串口，给DCDC升级，目前可以完整发送到DCDC，不掉包 */
+            send_modbus_info_packet(ota_ctx.firmware_len, ota_ctx.firmware_crc16);
+        }                       
     } else {
         LOG_ERR("OTA Error: CRC mismatch! Expected 0x%04X, Got 0x%04X\n",ota_ctx.firmware_crc16, calc_crc);
         send_ota_result(0);  // 发送失败帧
@@ -2641,7 +2785,143 @@ void verify_ota_firmware(void) {
     }
 }
 
+/**
+ * @函数名称: can1_error_handle_register()
+ * @功能描述: can1错误处理注册函数
+ * @输入: call_back - 错误处理回调函数
+ * @输出: 无
+ * @返回值: 0 - 注册成功, 1 - 注册失败
+ */
+uint8_t can1_error_handle_register(can1_error_handle_call_back_func call_back)
+{
+    if (call_back == NULL) {
+        return 1; // 失败
+    }
+    if (can1_error_handle == NULL) {
+        can1_error_handle = call_back;
+    }
+    return 0; // 成功
+}
 
+/**
+ * @函数名称: can1_error_handler
+ * @功能描述: 处理 OTA 过程中的错误，支持重试和失败通知
+ * @输入: error_code - 错误码
+ * @输出: 无
+ * @返回值: 无
+ */
+void can1_error_handler(uint8_t error_code)
+{
+    LOG_ERR("[OTA ERROR] Code = 0x%02X\n", error_code);
+
+    // 如果超过最大重传次数，终止 OTA
+    if (ota_ctx.retry_count >= ota_ctx.max_retries) {
+        LOG_ERR("[OTA] Max retries reached. Aborting OTA.\n");
+        send_ota_result(0x01);  // 通知失败
+        ota_ctx.state = OTA_STATE_IDLE;
+
+        // 清空上下文
+        ota_ctx.current_packet = 0;
+        ota_ctx.received_len = 0;
+        ota_ctx.buffer_len = 0;
+        ota_ctx.firmware_len = 0;
+        ota_ctx.firmware_crc16 = 0;
+        ota_ctx.last_recv_tick = 0;
+        memset(ota_ctx.write_buffer, 0xFF, sizeof(ota_ctx.write_buffer));
+        return;
+    }
+
+    // 否则请求重传
+    ota_ctx.retry_count++;  // 增加重试次数
+    send_packet_ack(ota_ctx.current_packet, 0x01);
+}
+
+/**
+ * @函数名称: request_resend_packet
+ * @功能描述: 通过 CAN 请求重传指定 OTA 数据包
+ * @输入: packet_no  - 包号
+ *        error_code - 错误码
+ * @输出: 无
+ * @返回值: 无
+ */
+void request_resend_packet(uint16_t packet_no,uint8_t error_code)
+{
+    can_trasnmit_message_struct tx_msg;
+    uint8_t frame[8] = {0};
+
+    // 填写数据：包号（大端）
+    frame[0] = (packet_no >> 8) & 0xFF;
+    frame[1] = packet_no & 0xFF;
+
+    // 填写错误码（大端）
+    frame[2] = (error_code >> 8) & 0xFF;
+    frame[3] = error_code & 0xFF;
+
+    // 保留字段默认 0（frame[4~7] 已初始化为 0）
+
+    tx_msg.tx_efid = 0xCE10000;
+    tx_msg.tx_ff = CAN_FF_EXTENDED;
+    tx_msg.tx_ft = CAN_FT_DATA;
+    tx_msg.tx_dlen = 8;
+    memcpy(tx_msg.tx_data, frame, 8);
+
+    if (can_message_transmit(CAN1, &tx_msg) == CAN_TRANSMIT_OK) {
+        LOG_INFO("[OTA] Sent error frame. Packet: 0x%04X, Error: 0x%04X\n", packet_no, error_code);
+    } else {
+        LOG_ERR("[OTA] Failed to send error frame\n");
+    }
+}
+
+/**
+ * @函数名称: send_packet_ack
+ * @功能描述: 发送 OTA 数据包的 ACK 确认帧
+ * @输入: packet_no   - 数据包号
+ *        status_code - 状态码 (0x00=成功, 0x01=失败, 0x02=包号错误)
+ * @输出: 无
+ * @返回值: 无
+ */
+void send_packet_ack(uint16_t packet_no, uint8_t status_code)
+{
+    can_trasnmit_message_struct tx_msg;
+    uint8_t frame[8] = {0};
+
+    frame[0] = (packet_no >> 8) & 0xFF;
+    frame[1] = packet_no & 0xFF;
+    frame[2] = status_code; // 0x00=成功, 0x01=失败, 0x02=包号错误
+    // frame[3~7] 默认为0
+    tx_msg.tx_efid = OTA_FLAG;
+    tx_msg.tx_ff = CAN_FF_EXTENDED;
+    tx_msg.tx_ft = CAN_FT_DATA;
+    tx_msg.tx_dlen = 8;
+    memcpy(tx_msg.tx_data, frame, 8);
+
+    can_message_transmit(CAN1, &tx_msg);
+    
+    
+}
+
+/**
+ * @函数名称: send_ota_result
+ * @功能描述: 发送 OTA 升级最终结果
+ * @输入: success - 0x00 表示成功，0x01 表示失败
+ * @输出: 无
+ * @返回值: 无
+ */
+void send_ota_result(uint8_t success)
+{
+    can_trasnmit_message_struct tx_msg;
+    uint8_t frame[8] = {0};
+
+    frame[0] = success ? 0x00 : 0x01; // 0x00 表示成功，0x01 表示失败
+
+    tx_msg.tx_efid = OTA_FLAG+0x100;
+    tx_msg.tx_ff = CAN_FF_EXTENDED;
+    tx_msg.tx_ft = CAN_FT_DATA;
+    tx_msg.tx_dlen = 8;
+    memcpy(tx_msg.tx_data, frame, 8);
+
+    can_message_transmit(CAN1, &tx_msg);
+}
 
 /**
  * @函数名称: can1_check_whitelist_ef()
@@ -2727,114 +3007,6 @@ uint8_t can1_send_msg(uint32_t id, uint8_t* data, uint8_t len)
         }
     }
     return 0; // 成功
-}
-
-/**
- * @函数名称: can1_error_handle_register()
- * @功能描述: can1错误处理注册函数
- * @输入: call_back - 错误处理回调函数
- * @输出: 无
- * @返回值: 0 - 注册成功, 1 - 注册失败
- */
-uint8_t can1_error_handle_register(can1_error_handle_call_back_func call_back)
-{
-    if (call_back == NULL) {
-        return 1; // 失败
-    }
-    if (can1_error_handle == NULL) {
-        can1_error_handle = call_back;
-    }
-    return 0; // 成功
-}
-
-void can1_error_handler(uint8_t error_code)
-{
-    LOG_ERR("[OTA ERROR] Code = 0x%02X\n", error_code);
-
-    // 如果超过最大重传次数，终止 OTA
-    if (ota_ctx.retry_count >= ota_ctx.max_retries) {
-        LOG_ERR("[OTA] Max retries reached. Aborting OTA.\n");
-        send_ota_result(0x01);  // 通知失败
-        ota_ctx.state = OTA_STATE_IDLE;
-
-        // 清空上下文
-        ota_ctx.current_packet = 0;
-        ota_ctx.received_len = 0;
-        ota_ctx.buffer_len = 0;
-        ota_ctx.firmware_len = 0;
-        ota_ctx.firmware_crc16 = 0;
-        ota_ctx.last_recv_tick = 0;
-        memset(ota_ctx.write_buffer, 0xFF, sizeof(ota_ctx.write_buffer));
-        return;
-    }
-
-    // 否则请求重传
-    ota_ctx.retry_count++;  // 增加重试次数
-    send_packet_ack(ota_ctx.current_packet, 0x01);
-}
-
-void request_resend_packet(uint16_t packet_no,uint8_t error_code)
-{
-    can_trasnmit_message_struct tx_msg;
-    uint8_t frame[8] = {0};
-
-    // 填写数据：包号（大端）
-    frame[0] = (packet_no >> 8) & 0xFF;
-    frame[1] = packet_no & 0xFF;
-
-    // 填写错误码（大端）
-    frame[2] = (error_code >> 8) & 0xFF;
-    frame[3] = error_code & 0xFF;
-
-    // 保留字段默认 0（frame[4~7] 已初始化为 0）
-
-    tx_msg.tx_efid = 0xCE00000;
-    tx_msg.tx_ff = CAN_FF_EXTENDED;
-    tx_msg.tx_ft = CAN_FT_DATA;
-    tx_msg.tx_dlen = 8;
-    memcpy(tx_msg.tx_data, frame, 8);
-
-    if (can_message_transmit(CAN1, &tx_msg) == CAN_TRANSMIT_OK) {
-        LOG_INFO("[OTA] Sent error frame. Packet: 0x%04X, Error: 0x%04X\n", packet_no, error_code);
-    } else {
-        LOG_ERR("[OTA] Failed to send error frame\n");
-    }
-}
-
-void send_packet_ack(uint16_t packet_no, uint8_t status_code)
-{
-    can_trasnmit_message_struct tx_msg;
-    uint8_t frame[8] = {0};
-
-    frame[0] = (packet_no >> 8) & 0xFF;
-    frame[1] = packet_no & 0xFF;
-    frame[2] = status_code; // 0x00=成功, 0x01=失败, 0x02=包号错误
-    // frame[3~7] 默认为0
-    tx_msg.tx_efid = 0xCE00000;
-    tx_msg.tx_ff = CAN_FF_EXTENDED;
-    tx_msg.tx_ft = CAN_FT_DATA;
-    tx_msg.tx_dlen = 8;
-    memcpy(tx_msg.tx_data, frame, 8);
-
-    can_message_transmit(CAN1, &tx_msg);
-    
-    
-}
-
-void send_ota_result(uint8_t success)
-{
-    can_trasnmit_message_struct tx_msg;
-    uint8_t frame[8] = {0};
-
-    frame[0] = success ? 0x00 : 0x01; // 0x00 表示成功，0x01 表示失败
-
-    tx_msg.tx_efid = 0xCE10000;
-    tx_msg.tx_ff = CAN_FF_EXTENDED;
-    tx_msg.tx_ft = CAN_FT_DATA;
-    tx_msg.tx_dlen = 8;
-    memcpy(tx_msg.tx_data, frame, 8);
-
-    can_message_transmit(CAN1, &tx_msg);
 }
 
 
